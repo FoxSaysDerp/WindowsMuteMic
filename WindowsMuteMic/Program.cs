@@ -1,44 +1,65 @@
 ﻿using System;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using System.Diagnostics;
 
 namespace Program
 {
-    class Program
+    public class MuteMic
     {
-        private const int WM_APPCOMMAND = 0x319;
-        private const int APPCOMMAND_MICROPHONE_VOLUME_MUTE = 0x180000;
+        private const int WH_KEYBOARD_LL = 13;
+        private const int WM_KEYDOWN = 0x0100;
 
-        [DllImport("user32.dll", SetLastError = false)]
-        private static extern IntPtr GetForegroundWindow();
-
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+        private static LowLevelKeyboardProc _proc = HookCallback;
+        private static IntPtr _hookID = IntPtr.Zero;
 
         [DllImport("user32.dll", SetLastError = true)]
-        private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+        private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
 
-        [DllImport("kernel32.dll")]
-        static extern uint GetLastError();
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool UnhookWindowsHookEx(IntPtr hhk);
 
-        private static int hotkeyId = 0;
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+        private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
         static void Main(string[] args)
         {
-            // Register the hotkey with the Control, Alt, and Shift modifiers and the F12 key
-            bool result = RegisterHotKey(IntPtr.Zero, hotkeyId, (uint)(Keys.Control | Keys.Alt | Keys.Shift), (uint)Keys.F12);
+            _hookID = SetHook(_proc);
+            Application.Run();
+            UnhookWindowsHookEx(_hookID);
+        }
 
-            if (!result)
+        private static IntPtr SetHook(LowLevelKeyboardProc proc)
+        {
+            using ProcessModule module = Process.GetCurrentProcess().MainModule;
+            return SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(module.ModuleName), 0);
+        }
+
+        private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
             {
-                uint error = GetLastError();
-                MessageBox.Show("Failed to register hotkey. Error code: " + error.ToString());
-                return;
+                int vkCode = Marshal.ReadInt32(lParam);
+                Keys key = (Keys)vkCode;
+
+                // Check if the hotkey combination is pressed (Control + Alt + Shift + `)
+                if (Control.ModifierKeys == (Keys.Control | Keys.Alt | Keys.Shift) && key == Keys.Oemtilde)
+                {
+                    // The hotkey was pressed
+                    MuteMicrophone();
+
+                    // Return a non-zero value to indicate that the hook has handled the message
+                    return (IntPtr)1;
+                }
             }
 
-            // Listen for hotkey events
-            Application.AddMessageFilter(new HotkeyMessageFilter());
-
-            Application.Run(new ApplicationContext());
+            // Call the next hook in the chain
+            return CallNextHookEx(_hookID, nCode, wParam, lParam);
         }
 
         private static void MuteMicrophone()
@@ -57,19 +78,10 @@ namespace Program
         [DllImport("user32.dll", SetLastError = false)]
         private static extern IntPtr SendMessageW(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
 
-        private class HotkeyMessageFilter : IMessageFilter
-        {
-            public bool PreFilterMessage(ref Message m)
-            {
-                if (m.Msg != 0x0312 || m.WParam.ToInt32() != hotkeyId) return false;
-                // The hotkey was pressed
-                MuteMicrophone();
+        [DllImport("user32.dll", SetLastError = false)]
+        private static extern IntPtr GetForegroundWindow();
 
-                // Return true to indicate that the message has been handled
-                return true;
-
-                // Return false to indicate that the message has not been handled
-            }
-        }
+        private const int WM_APPCOMMAND = 0x319;
+        private const int APPCOMMAND_MICROPHONE_VOLUME_MUTE = 0x180000;
     }
 }
