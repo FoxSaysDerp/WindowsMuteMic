@@ -15,6 +15,7 @@ namespace WindowsMuteMic
         public Form1()
         {
             InitializeComponent();
+            this.Icon = Properties.Resources.MicrophoneIcon;
         }
     }
 }
